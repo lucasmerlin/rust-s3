@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use crate::error::S3Error;
 use crate::serde_types::{
     BucketLifecycleConfiguration, CompleteMultipartUploadData, CorsConfiguration,
+    DeleteObjectsRequest,
 };
 
 use crate::EMPTY_PAYLOAD_SHA;
@@ -171,6 +172,9 @@ pub enum Command<'a> {
         expected_bucket_owner: String,
         version_id: Option<String>,
     },
+    DeleteObjects {
+        data: DeleteObjectsRequest,
+    },
 }
 
 impl<'a> Command<'a> {
@@ -203,9 +207,9 @@ impl<'a> Command<'a> {
             | Command::DeleteBucket
             | Command::DeleteBucketCors { .. }
             | Command::DeleteBucketLifecycle => HttpMethod::Delete,
-            Command::InitiateMultipartUpload { .. } | Command::CompleteMultipartUpload { .. } => {
-                HttpMethod::Post
-            }
+            Command::InitiateMultipartUpload { .. }
+            | Command::CompleteMultipartUpload { .. }
+            | Command::DeleteObjects { .. } => HttpMethod::Post,
             Command::HeadObject => HttpMethod::Head,
             Command::GetObjectAttributes { .. } => HttpMethod::Get,
         }
@@ -229,6 +233,7 @@ impl<'a> Command<'a> {
                 quick_xml::se::to_string(configuration)?.len()
             }
             Command::PutBucketCors { configuration, .. } => configuration.to_string().len(),
+            Command::DeleteObjects { data } => data.len(),
             Command::HeadObject => 0,
             Command::DeleteObject => 0,
             Command::DeleteObjectTagging => 0,
@@ -262,7 +267,8 @@ impl<'a> Command<'a> {
             Command::PutObject { content_type, .. } => content_type.to_string(),
             Command::CompleteMultipartUpload { .. }
             | Command::PutBucketLifecycle { .. }
-            | Command::PutBucketCors { .. } => "application/xml".into(),
+            | Command::PutBucketCors { .. }
+            | Command::DeleteObjects { .. } => "application/xml".into(),
             Command::HeadObject => "text/plain".into(),
             Command::DeleteObject => "text/plain".into(),
             Command::DeleteObjectTagging => "text/plain".into(),
@@ -326,6 +332,11 @@ impl<'a> Command<'a> {
             Command::PutBucketCors { configuration, .. } => {
                 let mut sha = Sha256::default();
                 sha.update(configuration.to_string().as_bytes());
+                hex::encode(sha.finalize().as_slice())
+            }
+            Command::DeleteObjects { data } => {
+                let mut sha = Sha256::default();
+                sha.update(data.to_string().as_bytes());
                 hex::encode(sha.finalize().as_slice())
             }
             Command::HeadObject => EMPTY_PAYLOAD_SHA.into(),

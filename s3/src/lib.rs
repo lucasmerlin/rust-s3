@@ -17,6 +17,7 @@ pub use put_object_request::PutObjectRequest;
 #[cfg(any(feature = "with-tokio", feature = "with-async-std"))]
 pub use put_object_request::PutObjectStreamRequest;
 pub use region::Region;
+pub use serde_types::{DeleteError, DeleteObjectsResult, DeletedObject, ObjectToDelete};
 
 pub mod bucket;
 pub mod bucket_ops;

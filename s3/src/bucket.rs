@@ -90,8 +90,9 @@ use crate::error::S3Error;
 use crate::post_policy::PresignedPost;
 use crate::serde_types::{
     BucketLifecycleConfiguration, BucketLocationResult, CompleteMultipartUploadData,
-    CorsConfiguration, GetObjectAttributesOutput, HeadObjectResult,
-    InitiateMultipartUploadResponse, ListBucketResult, ListMultipartUploadsResult, Part,
+    CorsConfiguration, DeleteObjectsRequest, DeleteObjectsResult, GetObjectAttributesOutput,
+    HeadObjectResult, InitiateMultipartUploadResponse, ListBucketResult,
+    ListMultipartUploadsResult, ObjectToDelete, Part,
 };
 #[allow(unused_imports)]
 use crate::utils::{PutStreamResponse, error_from_response_data};
@@ -2114,6 +2115,113 @@ impl Bucket {
         let command = Command::DeleteObject;
         let request = RequestImpl::new(self, path.as_ref(), command).await?;
         request.response_data(false).await
+    }
+
+    /// Delete multiple objects from S3 in a single request.
+    ///
+    /// This is more efficient than calling `delete_object` multiple times when
+    /// deleting many objects. S3 supports up to 1,000 objects per request.
+    ///
+    /// # Example:
+    ///
+    /// ```no_run
+    /// use s3::bucket::Bucket;
+    /// use s3::creds::Credentials;
+    /// use s3::serde_types::ObjectToDelete;
+    /// use anyhow::Result;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    ///
+    /// let bucket_name = "rust-s3-test";
+    /// let region = "us-east-1".parse()?;
+    /// let credentials = Credentials::default()?;
+    /// let bucket = Bucket::new(bucket_name, region, credentials)?;
+    ///
+    /// let objects = vec![
+    ///     ObjectToDelete::new("file1.txt"),
+    ///     ObjectToDelete::new("file2.txt"),
+    ///     ObjectToDelete::new("folder/file3.txt"),
+    /// ];
+    ///
+    /// // Async variant with `tokio` or `async-std` features
+    /// let result = bucket.delete_objects(objects).await?;
+    /// println!("Deleted {} objects", result.deleted.len());
+    /// if !result.errors.is_empty() {
+    ///     println!("Failed to delete {} objects", result.errors.len());
+    /// }
+    ///
+    /// // `sync` feature will produce an identical method
+    /// #[cfg(feature = "sync")]
+    /// let result = bucket.delete_objects(objects)?;
+    ///
+    /// // Blocking variant, generated with `blocking` feature in combination
+    /// // with `tokio` or `async-std` features.
+    /// #[cfg(feature = "blocking")]
+    /// let result = bucket.delete_objects_blocking(objects)?;
+    /// #
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[maybe_async::maybe_async]
+    pub async fn delete_objects(
+        &self,
+        objects: Vec<ObjectToDelete>,
+    ) -> Result<DeleteObjectsResult, S3Error> {
+        let data = DeleteObjectsRequest::new(objects);
+        let command = Command::DeleteObjects { data };
+        let request = RequestImpl::new(self, "", command).await?;
+        let response = request.response_data(false).await?;
+        let result: DeleteObjectsResult = quick_xml::de::from_str(response.as_str()?)?;
+        Ok(result)
+    }
+
+    /// Delete multiple objects from S3 in quiet mode.
+    ///
+    /// In quiet mode, the response only includes errors. Successfully deleted
+    /// objects are not listed in the response, which reduces response size.
+    ///
+    /// # Example:
+    ///
+    /// ```no_run
+    /// use s3::bucket::Bucket;
+    /// use s3::creds::Credentials;
+    /// use s3::serde_types::ObjectToDelete;
+    /// use anyhow::Result;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    ///
+    /// let bucket_name = "rust-s3-test";
+    /// let region = "us-east-1".parse()?;
+    /// let credentials = Credentials::default()?;
+    /// let bucket = Bucket::new(bucket_name, region, credentials)?;
+    ///
+    /// let objects = vec![
+    ///     ObjectToDelete::new("file1.txt"),
+    ///     ObjectToDelete::new("file2.txt"),
+    /// ];
+    ///
+    /// // In quiet mode, only errors are returned
+    /// let result = bucket.delete_objects_quiet(objects).await?;
+    /// if result.errors.is_empty() {
+    ///     println!("All objects deleted successfully");
+    /// }
+    /// #
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[maybe_async::maybe_async]
+    pub async fn delete_objects_quiet(
+        &self,
+        objects: Vec<ObjectToDelete>,
+    ) -> Result<DeleteObjectsResult, S3Error> {
+        let data = DeleteObjectsRequest::new_quiet(objects);
+        let command = Command::DeleteObjects { data };
+        let request = RequestImpl::new(self, "", command).await?;
+        let response = request.response_data(false).await?;
+        let result: DeleteObjectsResult = quick_xml::de::from_str(response.as_str()?)?;
+        Ok(result)
     }
 
     /// Head object from S3.

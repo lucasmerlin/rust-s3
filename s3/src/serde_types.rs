@@ -801,6 +801,112 @@ impl Transition {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectToDelete {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "VersionId", skip_serializing_if = "Option::is_none")]
+    pub version_id: Option<String>,
+}
+
+impl ObjectToDelete {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            version_id: None,
+        }
+    }
+
+    pub fn new_with_version(key: impl Into<String>, version_id: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            version_id: Some(version_id.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteObjectsRequest {
+    pub objects: Vec<ObjectToDelete>,
+    pub quiet: bool,
+}
+
+impl DeleteObjectsRequest {
+    pub fn new(objects: Vec<ObjectToDelete>) -> Self {
+        Self {
+            objects,
+            quiet: false,
+        }
+    }
+
+    pub fn new_quiet(objects: Vec<ObjectToDelete>) -> Self {
+        Self {
+            objects,
+            quiet: true,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.to_string().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.objects.is_empty()
+    }
+}
+
+impl fmt::Display for DeleteObjectsRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
+        write!(f, "<Delete>")?;
+        write!(f, "<Quiet>{}</Quiet>", self.quiet)?;
+        for obj in &self.objects {
+            write!(f, "<Object>")?;
+            let escaped_key = quick_xml::escape::escape(&obj.key);
+            write!(f, "<Key>{}</Key>", escaped_key)?;
+            if let Some(ref version_id) = obj.version_id {
+                let escaped_version = quick_xml::escape::escape(version_id);
+                write!(f, "<VersionId>{}</VersionId>", escaped_version)?;
+            }
+            write!(f, "</Object>")?;
+        }
+        write!(f, "</Delete>")
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename = "DeleteResult")]
+pub struct DeleteObjectsResult {
+    #[serde(rename = "Deleted", default)]
+    pub deleted: Vec<DeletedObject>,
+    #[serde(rename = "Error", default)]
+    pub errors: Vec<DeleteError>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DeletedObject {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "VersionId")]
+    pub version_id: Option<String>,
+    #[serde(rename = "DeleteMarker")]
+    pub delete_marker: Option<bool>,
+    #[serde(rename = "DeleteMarkerVersionId")]
+    pub delete_marker_version_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DeleteError {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "Code")]
+    pub code: String,
+    #[serde(rename = "Message")]
+    pub message: String,
+    #[serde(rename = "VersionId")]
+    pub version_id: Option<String>,
+}
+
 #[cfg(test)]
 mod test {
     use crate::serde_types::{
@@ -875,5 +981,75 @@ mod test {
             se,
             r#"<LifecycleConfiguration><Rule><AbortIncompleteMultipartUpload><DaysAfterInitiation>30</DaysAfterInitiation></AbortIncompleteMultipartUpload><Expiration><Date>2024-06-017</Date><Days>30</Days><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration><Filter><ObjectSizeGreaterThan>10</ObjectSizeGreaterThan><ObjectSizeLessThan>50</ObjectSizeLessThan></Filter><ID>lala</ID><NoncurrentVersionExpiration><NewerNoncurrentVersions>30</NewerNoncurrentVersions><NoncurrentDays>30</NoncurrentDays></NoncurrentVersionExpiration><NoncurrentVersionTransition><NewerNoncurrentVersions>30</NewerNoncurrentVersions><NoncurrentDays>30</NoncurrentDays><StorageClass>GLACIER</StorageClass></NoncurrentVersionTransition><Status>Enabled</Status><Transition><Date>2024-06-017</Date><Days>30</Days><StorageClass>GLACIER</StorageClass></Transition></Rule></LifecycleConfiguration>"#
         )
+    }
+
+    #[test]
+    fn delete_objects_request_xml() {
+        use crate::serde_types::{DeleteObjectsRequest, ObjectToDelete};
+
+        let request = DeleteObjectsRequest::new(vec![
+            ObjectToDelete::new("key1"),
+            ObjectToDelete::new_with_version("key2", "version-123"),
+        ]);
+
+        let xml = request.to_string();
+        assert!(xml.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(xml.contains("<Delete>"));
+        assert!(xml.contains("<Quiet>false</Quiet>"));
+        assert!(xml.contains("<Object><Key>key1</Key></Object>"));
+        assert!(xml.contains("<Object><Key>key2</Key><VersionId>version-123</VersionId></Object>"));
+        assert!(xml.contains("</Delete>"));
+    }
+
+    #[test]
+    fn delete_objects_request_quiet_xml() {
+        use crate::serde_types::{DeleteObjectsRequest, ObjectToDelete};
+
+        let request = DeleteObjectsRequest::new_quiet(vec![ObjectToDelete::new("key1")]);
+
+        let xml = request.to_string();
+        assert!(xml.contains("<Quiet>true</Quiet>"));
+    }
+
+    #[test]
+    fn delete_objects_request_xml_escaping() {
+        use crate::serde_types::{DeleteObjectsRequest, ObjectToDelete};
+
+        let request = DeleteObjectsRequest::new(vec![ObjectToDelete::new("key<with>&special\"chars")]);
+
+        let xml = request.to_string();
+        assert!(xml.contains("&lt;"));
+        assert!(xml.contains("&gt;"));
+        assert!(xml.contains("&amp;"));
+    }
+
+    #[test]
+    fn delete_objects_result_deserialize() {
+        use crate::serde_types::DeleteObjectsResult;
+
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Deleted>
+                <Key>key1</Key>
+            </Deleted>
+            <Deleted>
+                <Key>key2</Key>
+                <VersionId>ver123</VersionId>
+            </Deleted>
+            <Error>
+                <Key>key3</Key>
+                <Code>AccessDenied</Code>
+                <Message>Access Denied</Message>
+            </Error>
+        </DeleteResult>"#;
+
+        let result: DeleteObjectsResult = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(result.deleted.len(), 2);
+        assert_eq!(result.deleted[0].key, "key1");
+        assert_eq!(result.deleted[1].key, "key2");
+        assert_eq!(result.deleted[1].version_id, Some("ver123".to_string()));
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].key, "key3");
+        assert_eq!(result.errors[0].code, "AccessDenied");
     }
 }

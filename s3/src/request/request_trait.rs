@@ -249,6 +249,8 @@ pub trait Request {
         } else if let Command::PutBucketCors { configuration, .. } = &self.command() {
             let cors = configuration.to_string();
             cors.as_bytes().to_vec()
+        } else if let Command::DeleteObjects { data, .. } = &self.command() {
+            data.to_string().as_bytes().to_vec()
         } else {
             Vec::new()
         };
@@ -550,6 +552,9 @@ pub trait Request {
             Command::PutObjectTagging { .. } => {}
             Command::UploadPart { .. } => {}
             Command::CreateBucket { .. } => {}
+            Command::DeleteObjects { .. } => {
+                url_str.push_str("?delete");
+            }
         }
 
         let mut url = Url::parse(&url_str)?;
@@ -813,6 +818,10 @@ pub trait Request {
                 HeaderName::from_static("x-amz-object-attributes"),
                 "ETag".parse()?,
             );
+        } else if let Command::DeleteObjects { data, .. } = self.command() {
+            let digest = md5::compute(data.to_string().as_bytes());
+            let hash = general_purpose::STANDARD.encode(digest.as_ref());
+            headers.insert(HeaderName::from_static("content-md5"), hash.parse()?);
         }
 
         // This must be last, as it signs the other headers, omitted if no secret key is provided
